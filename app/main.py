@@ -3,51 +3,77 @@ import threading
 from socket import socket as Socket
 
 
+def new_line() -> str:
+    return "\r\n"
+
+
 def status_ok() -> str:
-    return "HTTP/1.1 200 OK\r\n"
+    return "HTTP/1.1 200 OK"
 
 
 def status_not_found() -> str:
-    return "HTTP/1.1 404 Not Found\r\n\r\n"
+    return "HTTP/1.1 404 Not Found"
 
 
-def with_body(body: str) -> str:
-    return f"Content-Type: text/plain\r\nContent-Length: {len(body)}\r\n\r\n{body}"
+def index() -> str:
+    return status_ok() + new_line() + new_line()
+
+
+def echo(param: str) -> str:
+    message = ""
+    message += status_ok() + new_line()
+    message += "Content-Type: text/plain" + new_line()
+    message += f"Content-Length: {len(param)}" + new_line()
+    message += new_line()
+    message += param
+    return message
+
+
+def user_agent(header: str) -> str:
+    message = ""
+    message += status_ok() + new_line()
+    message += "Content-Type: text/plain" + new_line()
+    message += f"Content-Length: {len(header)}" + new_line()
+    message += new_line()
+    message += header
+    return message
+
+
+def not_found() -> str:
+    return status_not_found() + new_line() + new_line()
 
 
 def handle_connection(connection: Socket):
-    try:
-        request = connection.recv(4_096).decode()
+    with connection as con:
+        request = con.recv(4_096).decode()
         request_lines_and_body = request.split("\r\n\r\n")
         body = None
         if len(request_lines_and_body) == 2:
             body = request_lines_and_body[1]
         request_lines = request_lines_and_body[0].split("\r\n")
         request_line, headers = request_lines[0], request_lines[1:]
-        user_agent = None
+        agent = None
         for header in headers:
             key, value = header.split()
             if key.lower() == "user-agent:":
-                user_agent = value
+                agent = value
         request_line_parts = request_line.split()
         method, target, version = (
             request_line_parts[0],
             request_line_parts[1],
             request_line_parts[2],
         )
-        message = ""
+        response = ""
         if target == "/":
-            message += status_ok() + "\r\n"
+            response = index()
         elif target.startswith("/echo/"):
-            echo = target[6:]
-            message += status_ok() + with_body(echo)
-        elif target.startswith("/user-agent") and user_agent:
-            message += status_ok() + with_body(user_agent)
+            param = target[6:]
+            response = echo(param)
+        elif target.startswith("/user-agent") and agent:
+            response = user_agent(agent)
         else:
-            message += status_not_found()
-        connection.sendall(message.encode())
-    finally:
-        connection.close()
+            response += not_found()
+        con.sendall(response.encode())
 
 
 def main():
