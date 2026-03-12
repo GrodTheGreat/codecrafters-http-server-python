@@ -33,6 +33,7 @@ def main():
         connection.sendall(message.encode())
     elif target.startswith("/user-agent") and user_agent:
         message = f"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {len(user_agent)}\r\n\r\n{user_agent}"
+        connection.sendall(message.encode())
     else:
         connection.sendall(b"HTTP/1.1 404 Not Found\r\n\r\n")
 
