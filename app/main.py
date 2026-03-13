@@ -1,4 +1,5 @@
 import socket
+import sys
 import threading
 from pathlib import Path
 from socket import socket as Socket
@@ -44,12 +45,12 @@ def not_found() -> str:
     return status_not_found() + new_line() + new_line()
 
 
-ROOT = "/tmp/"
+FILES_DIR = "/tmp/"
 
 
 def files(file: str) -> str:
-    filepath = Path(Path(ROOT) / file.lstrip("/")).resolve()
-    if not filepath.is_relative_to(Path(ROOT).resolve()):
+    filepath = Path(Path(FILES_DIR) / file.lstrip("/")).resolve()
+    if not filepath.is_relative_to(Path(FILES_DIR).resolve()):
         return not_found()
     if not filepath.exists():
         return not_found()
@@ -101,8 +102,14 @@ def handle_connection(connection: Socket):
 
 
 def main():
+    global FILES_DIR
     # You can use print statements as follows for debugging, they'll be visible when running tests.
     print("Logs from your program will appear here!")
+
+    args = sys.argv
+    if "--directory" in args:
+        root = args.index("--directory")
+        FILES_DIR = args[root + 1]
 
     server_socket = socket.create_server(("localhost", 4221), reuse_port=True)
     while True:
