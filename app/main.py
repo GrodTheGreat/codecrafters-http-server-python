@@ -50,9 +50,9 @@ ROOT = "/tmp/"
 def files(file: str) -> str:
     filepath = Path(Path(ROOT) / file.lstrip("/")).resolve()
     if not filepath.is_relative_to(Path(ROOT).resolve()):
-        return status_not_found()
+        return not_found()
     if not filepath.exists():
-        return status_not_found()
+        return not_found()
     with open(filepath, "rb") as f:
         data = f.read()
     message = ""
