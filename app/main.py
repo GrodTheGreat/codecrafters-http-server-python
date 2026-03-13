@@ -1,5 +1,6 @@
 import socket
 import threading
+from pathlib import Path
 from socket import socket as Socket
 
 
@@ -43,6 +44,26 @@ def not_found() -> str:
     return status_not_found() + new_line() + new_line()
 
 
+ROOT = "/tmp/"
+
+
+def files(file: str) -> str:
+    filepath = Path(Path(ROOT) / file.lstrip("/")).resolve()
+    if not filepath.is_relative_to(Path(ROOT).resolve()):
+        return status_not_found()
+    if not filepath.exists():
+        return status_not_found()
+    with open(filepath, "rb") as f:
+        data = f.read()
+    message = ""
+    message += status_ok() + new_line()
+    message += "Content-Type: application/octet-stream" + new_line()
+    message += f"Content-Length: {len(data)}" + new_line()
+    message += new_line()
+    message += data.decode()
+    return message
+
+
 def handle_connection(connection: Socket):
     with connection as con:
         request = con.recv(4_096).decode()
@@ -69,6 +90,9 @@ def handle_connection(connection: Socket):
         elif target.startswith("/echo/"):
             param = target[6:]
             response = echo(param)
+        elif target.startswith("/files"):
+            file = target[6:]
+            response = files(file)
         elif target.startswith("/user-agent") and agent:
             response = user_agent(agent)
         else:
