@@ -1,104 +1,192 @@
 import socket
 import sys
 import threading
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from socket import socket as Socket
 
 
-def new_line() -> str:
-    return "\r\n"
+class BadRequestException(Exception):
+    pass
 
 
-def status_ok() -> str:
-    return "HTTP/1.1 200 OK"
+class HttpVersion(Enum):
+    V1_1 = b"HTTP/1.1"
 
 
-def status_not_found() -> str:
-    return "HTTP/1.1 404 Not Found"
+class HttpMethod(Enum):
+    GET = b"GET"
+    POST = b"POST"
 
 
-def index() -> str:
-    return status_ok() + new_line() + new_line()
+class HttpStatus(Enum):
+    OK = b"200 OK"
+    BAD_REQUEST = b"400 Bad Request"
+    NOT_FOUND = b"404 Not Found"
+    INTERNAL_SERVER_ERROR = b"500 Internal Server Error"
 
 
-def echo(param: str) -> str:
-    message = ""
-    message += status_ok() + new_line()
-    message += "Content-Type: text/plain" + new_line()
-    message += f"Content-Length: {len(param)}" + new_line()
-    message += new_line()
-    message += param
-    return message
+class HttpRequestLine:
+    def __init__(self, raw_line: bytes) -> None:
+        try:
+            raw_method, raw_target, raw_version = raw_line.split()
+            self.method = HttpMethod(raw_method)
+            self.target = raw_target
+            self.version = HttpVersion(raw_version)
+        except ValueError:
+            raise BadRequestException()
 
 
-def user_agent(header: str) -> str:
-    message = ""
-    message += status_ok() + new_line()
-    message += "Content-Type: text/plain" + new_line()
-    message += f"Content-Length: {len(header)}" + new_line()
-    message += new_line()
-    message += header
-    return message
+HttpHeaders = dict[bytes, list[bytes]]
 
 
-def not_found() -> str:
-    return status_not_found() + new_line() + new_line()
+@dataclass
+class HttpRequest:
+    request_line: HttpRequestLine
+    headers: HttpHeaders
+    body: bytes | None = None
+
+
+@dataclass
+class HttpStatusLine:
+    version: HttpVersion
+    status: HttpStatus
+
+
+@dataclass
+class HttpResponse:
+    status_line: HttpStatusLine
+    headers: HttpHeaders
+    body: bytes | None
+
+    def serialize(self) -> bytes:
+        message: list[bytes] = []
+        message += [
+            self.status_line.version.value,
+            b" ",
+            self.status_line.status.value,
+            b"\r\n",
+        ]
+        for key in self.headers.keys():
+            for value in self.headers[key]:
+                message += [key, b": ", value, b"\r\n"]
+        message.append(b"\r\n")
+        if self.body is not None:
+            message.append(self.body)
+        return b"".join(message)
+
+
+def parse_request(raw_data: bytes) -> HttpRequest:
+    try:
+        meta, body = raw_data.split(b"\r\n\r\n", maxsplit=1)
+        body = body if body else None
+    except ValueError:
+        raise BadRequestException()
+    lines = meta.split(b"\r\n")
+    request_line = HttpRequestLine(lines[0])
+    headers: HttpHeaders = {}
+    for line in lines[1:]:
+        try:
+            name, value = line.split(b": ", maxsplit=1)
+            name = name.lower()
+            headers.setdefault(name, []).append(value)
+        except ValueError:
+            raise BadRequestException()
+    return HttpRequest(request_line, headers, body)
+
+
+def index() -> HttpResponse:
+    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), {}, None)
+
+
+def echo(request: HttpRequest) -> HttpResponse:
+    param = request.request_line.target[6:]
+    headers = {
+        b"Content-Type": [b"text/plain"],
+        b"Content-Length": [str(len(param)).encode()],
+    }
+    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, param)
+
+
+def user_agent(request: HttpRequest) -> HttpResponse:
+    if b"user-agent" not in request.headers:
+        raise BadRequestException()
+    agent = request.headers[b"user-agent"][0]
+    headers = {
+        b"Content-Type": [b"text/plain"],
+        b"Content-Length": [str(len(agent)).encode()],
+    }
+    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, agent)
+
+
+def not_found() -> HttpResponse:
+    return HttpResponse(
+        HttpStatusLine(HttpVersion.V1_1, HttpStatus.NOT_FOUND),
+        {},
+        None,
+    )
+
+
+def bad_request() -> HttpResponse:
+    return HttpResponse(
+        HttpStatusLine(HttpVersion.V1_1, HttpStatus.BAD_REQUEST),
+        {},
+        None,
+    )
+
+
+def internal_server_error() -> HttpResponse:
+    return HttpResponse(
+        HttpStatusLine(HttpVersion.V1_1, HttpStatus.INTERNAL_SERVER_ERROR),
+        {},
+        None,
+    )
 
 
 FILES_DIR = "/tmp/"
 
 
-def files(file: str) -> str:
-    filepath = Path(Path(FILES_DIR) / file.lstrip("/")).resolve()
+def files(request: HttpRequest) -> HttpResponse:
+    try:
+        file = request.request_line.target[7:]
+    except IndexError:
+        raise BadRequestException()
+    filepath = Path(Path(FILES_DIR) / file.decode()).resolve()
     if not filepath.is_relative_to(Path(FILES_DIR).resolve()):
         return not_found()
     if not filepath.exists():
         return not_found()
     with open(filepath, "rb") as f:
         data = f.read()
-    message = ""
-    message += status_ok() + new_line()
-    message += "Content-Type: application/octet-stream" + new_line()
-    message += f"Content-Length: {len(data)}" + new_line()
-    message += new_line()
-    message += data.decode()
-    return message
+    headers = {
+        b"Content-Type": [b"application/octet-stream"],
+        b"Content-Length": [str(len(data)).encode()],
+    }
+    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, data)
 
 
 def handle_connection(connection: Socket):
     with connection as con:
-        request = con.recv(4_096).decode()
-        request_lines_and_body = request.split("\r\n\r\n")
-        body = None
-        if len(request_lines_and_body) == 2:
-            body = request_lines_and_body[1]
-        request_lines = request_lines_and_body[0].split("\r\n")
-        request_line, headers = request_lines[0], request_lines[1:]
-        agent = None
-        for header in headers:
-            key, value = header.split()
-            if key.lower() == "user-agent:":
-                agent = value
-        request_line_parts = request_line.split()
-        method, target, version = (
-            request_line_parts[0],
-            request_line_parts[1],
-            request_line_parts[2],
-        )
-        response = ""
-        if target == "/":
-            response = index()
-        elif target.startswith("/echo/"):
-            param = target[6:]
-            response = echo(param)
-        elif target.startswith("/files"):
-            file = target[6:]
-            response = files(file)
-        elif target.startswith("/user-agent") and agent:
-            response = user_agent(agent)
-        else:
-            response += not_found()
-        con.sendall(response.encode())
+        try:
+            raw_request = con.recv(4_096)
+            request = parse_request(raw_request)
+            match (request.request_line.method, request.request_line.target):
+                case (HttpMethod.GET, "/"):
+                    response = index()
+                case (HttpMethod.GET, target) if target.startswith(b"/echo/"):
+                    response = echo(request)
+                case (HttpMethod.GET, "/user-agent"):
+                    response = user_agent(request)
+                case (HttpMethod.GET, target) if target.startswith(b"/files/"):
+                    response = files(request)
+                case _:
+                    response = not_found()
+        except BadRequestException:
+            response = bad_request()
+        except Exception:
+            response = internal_server_error()
+        con.sendall(response.serialize())
 
 
 def main():
@@ -113,10 +201,14 @@ def main():
 
     server_socket = socket.create_server(("localhost", 4221), reuse_port=True)
     while True:
-        connection, address = server_socket.accept()  # wait for client
+        connection, _ = server_socket.accept()  # wait for client
         thread = threading.Thread(target=handle_connection, args=(connection,))
         thread.start()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nserver shutting down...")
+        print("have a good day :)")
