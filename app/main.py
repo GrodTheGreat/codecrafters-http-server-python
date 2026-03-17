@@ -188,11 +188,11 @@ def handle_connection(connection: Socket):
             raw_request = con.recv(4_096)
             request = parse_request(raw_request)
             match (request.request_line.method, request.request_line.target):
-                case (HttpMethod.GET, "/"):
+                case (HttpMethod.GET, b"/"):
                     response = index()
                 case (HttpMethod.GET, target) if target.startswith(b"/echo/"):
                     response = echo(request)
-                case (HttpMethod.GET, "/user-agent"):
+                case (HttpMethod.GET, b"/user-agent"):
                     response = user_agent(request)
                 case (HttpMethod.GET, target) if target.startswith(b"/files/"):
                     response = get_files(request)
