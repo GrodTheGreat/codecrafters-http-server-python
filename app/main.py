@@ -22,6 +22,7 @@ class HttpMethod(Enum):
 
 class HttpStatus(Enum):
     OK = b"200 OK"
+    CREATED = b"201 Created"
     BAD_REQUEST = b"400 Bad Request"
     NOT_FOUND = b"404 Not Found"
     INTERNAL_SERVER_ERROR = b"500 Internal Server Error"
@@ -96,30 +97,6 @@ def parse_request(raw_data: bytes) -> HttpRequest:
     return HttpRequest(request_line, headers, body)
 
 
-def index() -> HttpResponse:
-    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), {}, None)
-
-
-def echo(request: HttpRequest) -> HttpResponse:
-    param = request.request_line.target[6:]
-    headers = {
-        b"Content-Type": [b"text/plain"],
-        b"Content-Length": [str(len(param)).encode()],
-    }
-    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, param)
-
-
-def user_agent(request: HttpRequest) -> HttpResponse:
-    if b"user-agent" not in request.headers:
-        raise BadRequestException()
-    agent = request.headers[b"user-agent"][0]
-    headers = {
-        b"Content-Type": [b"text/plain"],
-        b"Content-Length": [str(len(agent)).encode()],
-    }
-    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, agent)
-
-
 def not_found() -> HttpResponse:
     return HttpResponse(
         HttpStatusLine(HttpVersion.V1_1, HttpStatus.NOT_FOUND),
@@ -144,10 +121,34 @@ def internal_server_error() -> HttpResponse:
     )
 
 
+def index() -> HttpResponse:
+    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), {}, None)
+
+
+def echo(request: HttpRequest) -> HttpResponse:
+    param = request.request_line.target[6:]
+    headers = {
+        b"Content-Type": [b"text/plain"],
+        b"Content-Length": [str(len(param)).encode()],
+    }
+    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, param)
+
+
+def user_agent(request: HttpRequest) -> HttpResponse:
+    if b"user-agent" not in request.headers:
+        raise BadRequestException()
+    agent = request.headers[b"user-agent"][0]
+    headers = {
+        b"Content-Type": [b"text/plain"],
+        b"Content-Length": [str(len(agent)).encode()],
+    }
+    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, agent)
+
+
 FILES_DIR = "/tmp/"
 
 
-def files(request: HttpRequest) -> HttpResponse:
+def get_files(request: HttpRequest) -> HttpResponse:
     try:
         file = request.request_line.target[7:]
     except IndexError:
@@ -166,6 +167,21 @@ def files(request: HttpRequest) -> HttpResponse:
     return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, data)
 
 
+def post_files(request: HttpRequest) -> HttpResponse:
+    try:
+        filename = request.request_line.target[7:]
+    except IndexError:
+        raise BadRequestException()
+    filepath = Path(Path(FILES_DIR) / filename.decode()).resolve()
+    if not filepath.is_relative_to(Path(FILES_DIR).resolve()):
+        raise BadRequestException()
+    if request.body is None or not request.body:
+        raise BadRequestException()
+    with open(filepath, "wb") as f:
+        f.write(request.body)
+    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.CREATED), {}, None)
+
+
 def handle_connection(connection: Socket):
     with connection as con:
         try:
@@ -179,7 +195,9 @@ def handle_connection(connection: Socket):
                 case (HttpMethod.GET, "/user-agent"):
                     response = user_agent(request)
                 case (HttpMethod.GET, target) if target.startswith(b"/files/"):
-                    response = files(request)
+                    response = get_files(request)
+                case (HttpMethod.POST, target) if target.startswith(b"/files/"):
+                    response = post_files(request)
                 case _:
                     response = not_found()
         except BadRequestException:
