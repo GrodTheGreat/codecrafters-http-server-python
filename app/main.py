@@ -193,10 +193,6 @@ def handle_connection(connection: Socket):
             try:
                 raw_request = con.recv(4_096)
                 request = parse_request(raw_request)
-                if b"connection" in request.headers:
-                    connection_type = request.headers.get(b"connection")
-                    if connection_type and b"close" in connection_type:
-                        break
                 match (request.request_line.method, request.request_line.target):
                     case (HttpMethod.GET, b"/"):
                         response = index()
@@ -210,6 +206,10 @@ def handle_connection(connection: Socket):
                         response = post_files(request)
                     case _:
                         response = not_found()
+                if b"connection" in request.headers:
+                    connection_type = request.headers.get(b"connection")
+                    if connection_type and b"close" in connection_type:
+                        break
             except BadRequestException:
                 response = bad_request()
             except Exception:
