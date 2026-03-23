@@ -189,27 +189,32 @@ def post_files(request: HttpRequest) -> HttpResponse:
 
 def handle_connection(connection: Socket):
     with connection as con:
-        try:
-            raw_request = con.recv(4_096)
-            request = parse_request(raw_request)
-            match (request.request_line.method, request.request_line.target):
-                case (HttpMethod.GET, b"/"):
-                    response = index()
-                case (HttpMethod.GET, target) if target.startswith(b"/echo/"):
-                    response = echo(request)
-                case (HttpMethod.GET, b"/user-agent"):
-                    response = user_agent(request)
-                case (HttpMethod.GET, target) if target.startswith(b"/files/"):
-                    response = get_files(request)
-                case (HttpMethod.POST, target) if target.startswith(b"/files/"):
-                    response = post_files(request)
-                case _:
-                    response = not_found()
-        except BadRequestException:
-            response = bad_request()
-        except Exception:
-            response = internal_server_error()
-        con.sendall(response.serialize())
+        while True:
+            try:
+                raw_request = con.recv(4_096)
+                request = parse_request(raw_request)
+                if b"connection" in request.headers:
+                    connection_type = request.headers.get(b"connection")
+                    if connection_type and b"close" in connection_type:
+                        break
+                match (request.request_line.method, request.request_line.target):
+                    case (HttpMethod.GET, b"/"):
+                        response = index()
+                    case (HttpMethod.GET, target) if target.startswith(b"/echo/"):
+                        response = echo(request)
+                    case (HttpMethod.GET, b"/user-agent"):
+                        response = user_agent(request)
+                    case (HttpMethod.GET, target) if target.startswith(b"/files/"):
+                        response = get_files(request)
+                    case (HttpMethod.POST, target) if target.startswith(b"/files/"):
+                        response = post_files(request)
+                    case _:
+                        response = not_found()
+            except BadRequestException:
+                response = bad_request()
+            except Exception:
+                response = internal_server_error()
+            con.sendall(response.serialize())
 
 
 def main():
