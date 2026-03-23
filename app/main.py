@@ -92,7 +92,7 @@ def parse_request(raw_data: bytes) -> HttpRequest:
         try:
             name, value = line.split(b": ", maxsplit=1)
             name = name.lower()
-            values = value.split(b",")
+            values = list(map(lambda v: v.strip(), value.split(b",")))
             headers.setdefault(name, []).extend(values)
         except ValueError:
             raise BadRequestException()
@@ -130,6 +130,7 @@ def index() -> HttpResponse:
 def echo(request: HttpRequest) -> HttpResponse:
     param = request.request_line.target[6:]
     encoding = request.headers.get(b"accept-encoding")
+    print(request.headers)
     headers = {}
     if encoding and b"gzip" in encoding:
         headers[b"Content-Encoding"] = [b"gzip"]
