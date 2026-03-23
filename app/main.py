@@ -215,6 +215,9 @@ def handle_connection(connection: Socket):
                 response = bad_request()
             except Exception:
                 response = internal_server_error()
+            finally:
+                if closed:
+                    response.headers[b"Connection"] = [b"close"]
             con.sendall(response.serialize())
             if closed:
                 break
