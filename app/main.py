@@ -92,7 +92,8 @@ def parse_request(raw_data: bytes) -> HttpRequest:
         try:
             name, value = line.split(b": ", maxsplit=1)
             name = name.lower()
-            headers.setdefault(name, []).append(value)
+            values = value.split(b",")
+            headers.setdefault(name, []).extend(values)
         except ValueError:
             raise BadRequestException()
     return HttpRequest(request_line, headers, body)
