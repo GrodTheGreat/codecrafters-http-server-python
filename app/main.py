@@ -129,15 +129,12 @@ def index() -> HttpResponse:
 def echo(request: HttpRequest) -> HttpResponse:
     param = request.request_line.target[6:]
     encoding = request.headers.get(b"accept-encoding")
-
-    if encoding == b"gzip":
-        param = gzip.compress(param)
-    headers = {
-        b"Content-Type": [b"text/plain"],
-        b"Content-Length": [str(len(param)).encode()],
-    }
+    headers = {}
     if encoding == b"gzip":
         headers[b"Content-Encoding"] = [b"gzip"]
+        param = gzip.compress(param)
+    headers[b"Content-Type"] = [b"text/plain"]
+    headers[b"Content-Length"] = [str(len(param)).encode()]
     return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, param)
 
 
