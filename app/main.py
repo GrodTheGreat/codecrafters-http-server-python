@@ -191,6 +191,7 @@ def handle_connection(connection: Socket):
     with connection as con:
         closed = False
         while True:
+            response = None
             try:
                 raw_request = con.recv(4_096)
                 request = parse_request(raw_request)
@@ -216,7 +217,7 @@ def handle_connection(connection: Socket):
             except Exception:
                 response = internal_server_error()
             finally:
-                if closed:
+                if closed and isinstance(response, HttpResponse):
                     response.headers[b"Connection"] = [b"close"]
             con.sendall(response.serialize())
             if closed:
