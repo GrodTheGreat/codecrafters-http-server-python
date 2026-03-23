@@ -130,7 +130,7 @@ def echo(request: HttpRequest) -> HttpResponse:
     param = request.request_line.target[6:]
     encoding = request.headers.get(b"accept-encoding")
     headers = {}
-    if encoding == b"gzip":
+    if encoding and b"gzip" in encoding:
         headers[b"Content-Encoding"] = [b"gzip"]
         param = gzip.compress(param)
     headers[b"Content-Type"] = [b"text/plain"]
