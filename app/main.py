@@ -130,7 +130,6 @@ def index() -> HttpResponse:
 def echo(request: HttpRequest) -> HttpResponse:
     param = request.request_line.target[6:]
     encoding = request.headers.get(b"accept-encoding")
-    print(request.headers)
     headers = {}
     if encoding and b"gzip" in encoding:
         headers[b"Content-Encoding"] = [b"gzip"]
