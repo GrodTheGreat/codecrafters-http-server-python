@@ -1,20 +1,36 @@
 import asyncio
 import gzip
+import re
 import sys
 from asyncio import StreamReader, StreamWriter
+from http import HTTPMethod
 from pathlib import Path
+from typing import Callable
 
-from exceptions import BadRequestException
-from parser import Parser
-from protocol import (
+from httpy.connection import Connection
+from httpy.exceptions import BadRequestException, InternalServerErrorException
+from httpy.protocol import (
     HttpResponse,
     HttpStatusLine,
+    HttpHeaders,
     HttpVersion,
     HttpStatus,
     HttpRequest,
-    HttpMethod,
-    HttpHeaders,
 )
+
+
+def ok(
+        body: str | bytes | None = None,
+        *,
+        content_type: str = "text/plain",
+        encoding: str | None = None,
+) -> HttpResponse:
+    headers = HttpHeaders()
+    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, body)
+
+
+def created() -> HttpResponse:
+    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), HttpHeaders(), None)
 
 
 def not_found() -> HttpResponse:
@@ -42,23 +58,29 @@ def internal_server_error() -> HttpResponse:
 
 
 def index(request: HttpRequest) -> HttpResponse:
-    return HttpResponse(
-        HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), HttpHeaders(), None,
-    )
+    return ok()
 
 
 def echo(request: HttpRequest) -> HttpResponse:
-    param = request.request_line.target.path[6:]
+    pattern = re.compile(r"^/echo/(?P<message>.+)$")
+    matcher = re.match(pattern, request.path)
+    if not matcher:
+        raise InternalServerErrorException()
+    message = matcher.groupdict()["message"]
     encoding = request.headers.get("accept-encoding")
     headers = HttpHeaders()
     if encoding and "gzip" in encoding:
         headers["content-encoding"] = ["gzip"]
-        param = gzip.compress(param.encode())
+        message = gzip.compress(message.encode())
     headers["content-type"] = ["text/plain"]
-    headers["content-length"] = [str(len(param))]
-    if isinstance(param, str):
-        param = param.encode()
-    return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, param)
+    headers["content-length"] = [str(len(message))]
+    if isinstance(message, str):
+        message = message.encode()
+    return HttpResponse(
+        HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK),
+        headers,
+        message,
+    )
 
 
 def user_agent(request: HttpRequest) -> HttpResponse:
@@ -69,7 +91,9 @@ def user_agent(request: HttpRequest) -> HttpResponse:
     headers["content-type"] = ["text/plain"]
     headers["content-length"] = [str(len(agent))]
     return HttpResponse(
-        HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, agent[0],
+        HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK),
+        headers,
+        agent[0],
     )
 
 
@@ -91,7 +115,6 @@ def get_files(request: HttpRequest) -> HttpResponse:
     headers = HttpHeaders()
     headers["content-type"] = ["application/octet-stream"]
     headers["content-length"] = [str(len(data))]
-
     return HttpResponse(HttpStatusLine(HttpVersion.V1_1, HttpStatus.OK), headers, data)
 
 
@@ -112,21 +135,38 @@ def post_files(request: HttpRequest) -> HttpResponse:
         with open(filepath, "wb") as f:
             f.write(request.body)
     return HttpResponse(
-        HttpStatusLine(HttpVersion.V1_1, HttpStatus.CREATED), HttpHeaders(), None,
+        HttpStatusLine(HttpVersion.V1_1, HttpStatus.CREATED),
+        HttpHeaders(),
+        None,
     )
 
 
 async def handle_connection(reader: StreamReader, writer: StreamWriter):
-    router = {
-        (HttpMethod.GET, "/"): index,
-        (HttpMethod.GET, "/echo"): echo,
-        (HttpMethod.GET, "/user-agent"): user_agent,
-        (HttpMethod.GET, "/files"): get_files,
-        (HttpMethod.POST, "/files"): post_files,
+    router: dict[re.Pattern, dict[HTTPMethod, Callable]] = {
+        re.compile(r"^/$"): {HTTPMethod.GET: index},
+        re.compile(r"^/echo/(?P<message>.+)$"): {HTTPMethod.GET: echo},
+        re.compile(r"^/user-agent$"): {HTTPMethod.GET: user_agent},
+        re.compile(r"^/files/(?P<filename>.+)$"): {
+            HTTPMethod.POST: post_files,
+            HTTPMethod.GET: get_files,
+        },
     }
-    parser = Parser(reader)
+    parser = Connection(reader)
     while not reader.at_eof():
-        request = await parser.parse()
+        request = await parser.get_request()
+        for route in router.keys():
+            if not re.match(route, request.path):
+                continue
+            subroute = router.get(route)
+            handler = subroute.get(request.method)
+            if handler is None:
+                # Need method not allowed response
+                not_found().serialize()
+            handler(request)
+        if "connection" in request.headers and request.headers["connection"] == "close":
+            writer.close()
+            await writer.wait_closed()
+            break
     pass
 
 
